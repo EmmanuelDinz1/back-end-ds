@@ -18,6 +18,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional; // Importar Optional
 
 @Service
 public class ContaService {
@@ -51,10 +52,8 @@ public class ContaService {
         if (novosRateios != null) {
             for (Rateio r : novosRateios) {
                 r.setConta(salva);
-                // O status do rateio já pode vir do front-end, mas garantimos um padrão.
-                // Aqui o front-end envia 'EM_ABERTO', que deve corresponder ao enum.
                 if (r.getStatus() == null) {
-                    r.setStatus(StatusRateio.PENDENTE); // Ou StatusRateio.EM_ABERTO se houver
+                    r.setStatus(StatusRateio.EM_ABERTO);
                 }
                 rateioRepository.save(r);
             }
@@ -67,6 +66,9 @@ public class ContaService {
         hist.setAcao(SituacaoConta.PENDENTE);
         hist.setTimestamp(Instant.now());
         historicoRepository.save(hist);
+
+        // Verifica a quitação da conta após criação (se já veio com rateios pagos)
+        verificarQuitacaoConta(salva.getId());
 
         return salva;
     }
@@ -133,9 +135,8 @@ public class ContaService {
         if (dadosAtualizados.getRateios() != null) {
             for (Rateio r : dadosAtualizados.getRateios()) {
                 r.setConta(existente);
-                // O status do rateio já pode vir do front-end em atualizações.
                 if (r.getStatus() == null) {
-                    r.setStatus(StatusRateio.PENDENTE); // Ou StatusRateio.EM_ABERTO
+                    r.setStatus(StatusRateio.EM_ABERTO); // Ou StatusRateio.PENDENTE
                 }
                 rateioRepository.save(r);
             }
@@ -152,6 +153,9 @@ public class ContaService {
         hist.setTimestamp(Instant.now());
         historicoRepository.save(hist);
 
+        // <--- NOVO: Chamar o método para verificar a quitação da conta principal
+        verificarQuitacaoConta(atualizada.getId());
+
         return atualizada;
     }
 
@@ -166,7 +170,7 @@ public class ContaService {
             HistoricoConta hist = new HistoricoConta();
             hist.setConta(existente);
             hist.setMorador(existente.getResponsavel());
-            hist.setAcao(SituacaoConta.CANCELADA); // Ação explícita de CANCELADA
+            hist.setAcao(SituacaoConta.CANCELADA);
             hist.setTimestamp(Instant.now());
             historicoRepository.save(hist);
         }
@@ -186,7 +190,7 @@ public class ContaService {
         copia.setDataVencimento(dadosAlterados.getDataVencimento());
         copia.setTipoConta(original.getTipoConta());
         copia.setResponsavel(dadosAlterados.getResponsavel());
-        copia.setSituacao(SituacaoConta.PENDENTE); // Uma conta replicada sempre começa PENDENTE
+        copia.setSituacao(SituacaoConta.PENDENTE);
 
         // salva cópia sem rateios
         Conta salva = contaRepository.save(copia);
@@ -197,7 +201,7 @@ public class ContaService {
             novo.setConta(salva);
             novo.setMorador(rOld.getMorador());
             novo.setValor(rOld.getValor());
-            novo.setStatus(StatusRateio.PENDENTE); // Rateio replicado sempre começa PENDENTE
+            novo.setStatus(StatusRateio.PENDENTE);
             rateioRepository.save(novo);
         }
 
@@ -210,5 +214,54 @@ public class ContaService {
         historicoRepository.save(hist);
 
         return salva;
+    }
+
+    // <--- NOVO MÉTODO: Verifica se todos os rateios de uma conta foram pagos
+    @Transactional
+    public void verificarQuitacaoConta(Long contaId) {
+        Optional<Conta> contaOptional = contaRepository.findById(contaId);
+        if (contaOptional.isEmpty()) {
+            return;
+        }
+        Conta conta = contaOptional.get();
+
+        // Se a conta já está quitada ou cancelada, não faz nada
+        if (conta.getSituacao() == SituacaoConta.QUITADA || conta.getSituacao() == SituacaoConta.CANCELADA) {
+            return;
+        }
+
+        // Busca todos os rateios da conta
+        List<Rateio> rateiosDaConta = rateioRepository.findByContaId(contaId);
+
+        // Verifica se TODOS os rateios estão PAGO
+        boolean todosPagos = rateiosDaConta.stream()
+                .allMatch(rateio -> rateio.getStatus() == StatusRateio.PAGO);
+
+        if (todosPagos && !rateiosDaConta.isEmpty()) { // Garante que há rateios e todos foram pagos
+            conta.setSituacao(SituacaoConta.QUITADA);
+            contaRepository.save(conta);
+
+            // Registra histórico de quitação
+            HistoricoConta hist = new HistoricoConta();
+            hist.setConta(conta);
+            hist.setMorador(conta.getResponsavel()); // O responsável pela conta registrou a quitação
+            hist.setAcao(SituacaoConta.QUITADA);
+            hist.setTimestamp(Instant.now());
+            historicoRepository.save(hist);
+            System.out.println(">>> ContaService: Conta " + conta.getId() + " automaticamente quitada.");
+
+        } else if (conta.getSituacao() == SituacaoConta.QUITADA && !todosPagos) {
+            // Se a conta estava quitada, mas um rateio foi reaberto, volta para PENDENTE
+            conta.setSituacao(SituacaoConta.PENDENTE);
+            contaRepository.save(conta);
+
+            HistoricoConta hist = new HistoricoConta();
+            hist.setConta(conta);
+            hist.setMorador(conta.getResponsavel());
+            hist.setAcao(SituacaoConta.PENDENTE);
+            hist.setTimestamp(Instant.now());
+            historicoRepository.save(hist);
+            System.out.println(">>> ContaService: Conta " + conta.getId() + " automaticamente reaberta para PENDENTE.");
+        }
     }
 }

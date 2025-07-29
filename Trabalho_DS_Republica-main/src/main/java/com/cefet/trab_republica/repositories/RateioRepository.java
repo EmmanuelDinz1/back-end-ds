@@ -1,12 +1,13 @@
 package com.cefet.trab_republica.repositories;
 
-import java.util.List;
+import com.cefet.trab_republica.entities.Rateio;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
-import com.cefet.trab_republica.entities.Rateio;
+
+import java.util.List;
 
 @Repository
 public interface RateioRepository extends JpaRepository<Rateio, Long> {
-    // Encontra rateios de uma conta específica
+    // <--- NOVO MÉTODO: Para buscar todos os rateios de uma conta
     List<Rateio> findByContaId(Long contaId);
 }
