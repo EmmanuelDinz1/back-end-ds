@@ -18,9 +18,15 @@ import org.springframework.security.web.util.matcher.OrRequestMatcher;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.http.HttpMethod;
 
+// ... (imports) ...
+import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
+import org.springframework.security.web.util.matcher.OrRequestMatcher;
+import org.springframework.security.web.util.matcher.RequestMatcher;
+import org.springframework.http.HttpMethod; // Para HttpMethod
+
 import java.io.IOException;
 import java.util.Collections;
-import java.util.Optional;
+import java.util.Optional; // Já deve estar lá
 
 @Component
 public class SecurityFilter extends OncePerRequestFilter {
@@ -28,10 +34,13 @@ public class SecurityFilter extends OncePerRequestFilter {
     private final TokenService tokenService;
     private final MoradorRepository moradorRepository;
 
-    // Define os RequestMatchers para os caminhos que devem ser PUBLICOS (permitAll)
-    // Estes caminhos serão PULADOS pelo SecurityFilter para que não tentem autenticar
+    // Define os RequestMatchers para os caminhos que devem ser PUBLICOS
+    // ESTES DEVEM SER OS MESMOS QUE ESTÃO COM .permitAll() NO SecurityConfig
     private final RequestMatcher publicPaths = new OrRequestMatcher(
-            new AntPathRequestMatcher("/api/moradores/**"), // Inclui cadastro e login POST/GET etc.
+            // Permite POST para /api/moradores (cadastro) e /api/moradores/auth (login)
+            new AntPathRequestMatcher("/api/moradores", HttpMethod.POST.name()),
+            new AntPathRequestMatcher("/api/moradores/auth", HttpMethod.POST.name()),
+
             new AntPathRequestMatcher("/h2-console/**"),     // H2 Console
             new AntPathRequestMatcher("/**", HttpMethod.OPTIONS.name()) // CORS pre-flight OPTIONS requests
     );
@@ -47,20 +56,18 @@ public class SecurityFilter extends OncePerRequestFilter {
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
 
-        // MUDANÇA CRUCIAL: Pular o filtro de segurança para caminhos públicos
-        // Se a requisição for para um caminho público, o filtro NÃO tenta autenticar.
-        // Ele apenas continua a cadeia, e o SecurityConfig.permitAll() fará o resto.
+        // Se a requisição for para um caminho público, o filtro PULA a autenticação
         if (publicPaths.matches(request)) {
             System.out.println(">>> SecurityFilter - Requisição para caminho público, pulando autenticação: " + request.getRequestURI() + " " + request.getMethod());
             filterChain.doFilter(request, response);
             return; // Sai do método do filtro para esta requisição
         }
 
-        // Tentar autenticar requisições para caminhos PROTEGIDOS
+        // Tenta autenticar requisições para caminhos PROTEGIDOS (os que não foram permitAll)
         String authHeader = request.getHeader("Authorization");
         System.out.println(">>> SecurityFilter - Header Authorization para rota protegida: " + (authHeader != null ? authHeader.substring(0, Math.min(authHeader.length(), 50)) : "NULO"));
 
-        String token = recoverToken(request); // Recupera o token (JWT) do header "Bearer "
+        String token = recoverToken(request); // Recupera o token JWT do header "Bearer "
         System.out.println(">>> SecurityFilter - Token extraído para rota protegida: " + token);
 
         if (token != null) {
@@ -73,7 +80,7 @@ public class SecurityFilter extends OncePerRequestFilter {
 
                     if (moradorOptional.isPresent()) {
                         Morador morador = moradorOptional.get();
-                        // Cria o objeto de autenticação com o email (principal) e authorities
+                        // Cria o objeto de autenticação com o email (principal) e authorities (ROLES)
                         var authorities = Collections.singletonList(new SimpleGrantedAuthority("ROLE_USER"));
                         var authentication = new UsernamePasswordAuthenticationToken(morador.getEmail(), null, authorities);
 
@@ -89,23 +96,21 @@ public class SecurityFilter extends OncePerRequestFilter {
 
             } catch (Exception e) { // Captura exceções da validação do JWT
                 System.err.println(">>> SecurityFilter - Erro inesperado ao autenticar token para rota protegida: " + e.getMessage());
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED); // 401 Unauthorized
+                return;
             }
         } else {
             System.out.println(">>> SecurityFilter - Nenhum token JWT fornecido no Authorization header para rota protegida.");
         }
 
-        // Continua a cadeia de filtros.
-        // Se a autenticação foi setada, a requisição segue como autenticada.
-        // Se não foi setada (e não é um caminho público), a regra anyRequest().authenticated() negará o acesso (403 Forbidden).
         filterChain.doFilter(request, response);
     }
 
-    // Recupera o token JWT do cabeçalho "Authorization: Bearer <token>"
     private String recoverToken(HttpServletRequest request) {
         String authHeader = request.getHeader("Authorization");
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            return authHeader.substring(7); // Extrai o token após "Bearer "
+            return authHeader.substring(7).trim();
         }
-        return null; // Retorna null se não for Bearer token
+        return null;
     }
 }

@@ -23,6 +23,7 @@ public class TokenService {
             Algorithm algorithm = Algorithm.HMAC256(secret);
             return JWT.create()
                     .withIssuer("TrabalhoPW") // Emissor do token
+
                     .withSubject(morador.getEmail()) // Assunto do token (email do morador)
                     .withExpiresAt(gerarDataExpiracao()) // Data de expiração
                     .sign(algorithm); // Assina o token com o algoritmo e a chave secreta

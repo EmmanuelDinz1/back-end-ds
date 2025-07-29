@@ -20,26 +20,22 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import com.cefet.trab_republica.config.SecurityFilter;
-
-import java.util.Arrays;
+import java.util.Arrays; // Importar Arrays
 import java.util.List;
 
 @Configuration
-@EnableWebSecurity // Habilita a segurança web do Spring
-@EnableMethodSecurity // Habilita segurança em nível de método (ex: @PreAuthorize)
+@EnableWebSecurity
+@EnableMethodSecurity
 public class SecurityConfig {
 
     @Autowired
     private SecurityFilter securityFilter;
 
-    // Bean para o PasswordEncoder (BCrypt)
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
 
-    // Bean para o AuthenticationManager
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration authenticationConfiguration) throws Exception {
         return authenticationConfiguration.getAuthenticationManager();
@@ -48,29 +44,28 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-                .csrf(csrf -> csrf.disable()) // Desabilita CSRF para APIs REST
-                .cors(Customizer.withDefaults()) // Habilita CORS (configurado no bean abaixo)
-                .headers(headers -> headers.frameOptions(frame -> frame.disable())) // Necessário para H2 Console
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)); // Garante que não há sessão de estado (para JWT)
+                .csrf(csrf -> csrf.disable())
+                .cors(Customizer.withDefaults())
+                .headers(headers -> headers.frameOptions(frame -> frame.disable()))
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
 
-        // Adiciona o SecurityFilter customizado ANTES do filtro de autenticação padrão do Spring.
-        // Ele é o responsável por autenticar requisições com o token JWT.
-        http.addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
-
-        // Configuração de autorização de requisições
+        // >>> REGRAS DE AUTORIZAÇÃO MAIS ESPECÍFICAS <<<
         http.authorizeHttpRequests(auth -> auth
-                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Permite requisições OPTIONS (para CORS preflight)
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll() // Permite OPTIONS para CORS
                 .requestMatchers("/h2-console/**").permitAll() // Permite acesso ao H2 Console
-                // <--- ESSENCIAL: Permite acesso a todos os endpoints de /api/moradores (cadastro e login)
-                .requestMatchers("/api/moradores/**").permitAll()
-                // Todas as outras requisições (que NÃO foram permitAll acima) exigem autenticação
+
+                // Permite POST para cadastro de morador e login de morador (SÓ POST!)
+                .requestMatchers(HttpMethod.POST, "/api/moradores", "/api/moradores/auth").permitAll()
+
+                // Todas as outras requisições para /api/moradores/** exigem autenticação
+                // E qualquer outra requisição NÃO especificada acima também exige autenticação
                 .anyRequest().authenticated()
         );
 
         return http.build();
     }
 
-    // Configuração de CORS
     @Bean
     CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
